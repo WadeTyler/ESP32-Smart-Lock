@@ -1,0 +1,4 @@
+.pio
+./idea/
+.idea/*
+/include/environment.h
