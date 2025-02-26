@@ -60,10 +60,7 @@ void setupBLE(String BLEName) {
 
 // ----------------------------- LOCK -----------------------------
 
-// Pins
-#define LED_LOCKED 2
-#define BUTTON_LOCK 13
-#define ACTIVE_BUZZER 12
+
 
 boolean isLocked = false;
 int lastLockButtonState = HIGH;
