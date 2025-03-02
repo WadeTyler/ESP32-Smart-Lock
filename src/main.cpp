@@ -1,3 +1,26 @@
+/*
+ * Project: Smart Lock System
+ * Author: Tyler Wade
+ * Date: 02/27/2025
+ *
+ * Description: This project consists of a smart lock door system using an ESP32-Wrover.
+ * It features a keypad for locking and unlocking, a lock/unlock button, LED indicator,
+ * buzzer sound, WiFi and Bluetooth functionality to lock/unlock.
+ *
+ */
+
+/*
+ * PIN LAYOUT
+ *
+ * LED_LOCKED 2
+ * BUTTON_LOCK 0
+ * ACTIVE_BUZZER 12
+ * KEYPAD_ROWS = {21, 19, 18, 5}
+ * KEYPAD_COLS = {25, 26, 27}
+*/
+
+
+#include <Adafruit_SSD1306.h>
 #include <Arduino.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -6,6 +29,15 @@
 #include <WiFi.h>
 
 #include <environment.h>
+#include <Keypad.h>
+#include <OledDisplay.h>
+
+// ----------------------------- OLED DISPLAY -----------------------------
+
+OledDisplay oled;
+
+// ----------------------------- SOUND -----------------------------
+boolean canPlaySound = true;
 
 // ----------------------------- LOCK -----------------------------
 
@@ -14,8 +46,6 @@ int lastLockButtonState = HIGH;
 
 // Store current output state
 String outputLockState = "Unlocked";
-
-boolean canPlaySound = false;
 
 void playLockSound() {
     if (!canPlaySound) return;
@@ -40,16 +70,100 @@ void toggleLocked() {
     if (isLocked) {
         // Turn light on
         digitalWrite(LED_LOCKED, HIGH);
+        digitalWrite(LOCK, HIGH);
         Serial.println("Locked");
         outputLockState = "Locked";
         playLockSound();
+        oled.setMessage("LOCKED");
+        delay(1000);
+        oled.setMessage("SMART\nLOCK");
     } else {
         digitalWrite(LED_LOCKED, LOW);
+        digitalWrite(LOCK, LOW);
         Serial.println("Unlocked");
         outputLockState = "Unlocked";
         playUnlockSound();
+        oled.setMessage("UNLOCKED");
+        delay(1000);
+        oled.setMessage("SMART\nLOCK");
     }
 }
+
+// ----------------------------- KEYPAD -----------------------------
+
+#define ROW_NUM 4
+#define COL_NUM 4
+
+
+byte pin_rows[ROW_NUM] = {32, 19, 18, 5};
+byte pin_columns[COL_NUM] = {25, 26, 27};
+
+char keys[ROW_NUM][COL_NUM] = {
+    {'1', '2', '3'},
+    {'4', '5', '6'},
+    {'7', '8', '9'},
+    {'*', '0', '#'}
+};
+
+Keypad keypad = Keypad(makeKeymap(keys), pin_rows, pin_columns, ROW_NUM, COL_NUM);
+
+String keypadInput = "";
+
+long lastInputTime = millis();
+long maxTimeSinceInput = 6000;
+
+void playKeypadSound() {
+    if (!canPlaySound) return;
+    digitalWrite(ACTIVE_BUZZER, HIGH);
+    delay(100);
+    digitalWrite(ACTIVE_BUZZER, LOW);
+}
+
+void processKey(char key) {
+    // Check if key is enter key button ("#")
+    if (key == '#') {
+        // Check if code matches and unlock if so
+        if (keypadInput.toInt() == UNLOCK_CODE && isLocked) {
+            Serial.println("Correct Code");
+            toggleLocked();
+        }
+
+        // If code does not match or the door is not locked
+        else {
+            Serial.println("Incorrect Code");
+            playLockSound();
+            oled.setMessage("WRONG\nCODE");
+            delay(1000);
+            oled.setMessage("SMART\nLOCK");
+        }
+
+        keypadInput = "";
+    }
+
+    // Check if key is lock button ("*")
+    else if (key == '*') {
+        if (!isLocked) {
+            toggleLocked();
+        }
+        keypadInput = "";
+    }
+
+    // Otherwise add to input string
+    else {
+        keypadInput += key;
+        oled.setMessage(keypadInput);
+        playKeypadSound();
+        lastInputTime = millis();
+    }
+}
+
+void checkTimeSinceInput() {
+    if (millis() - lastInputTime > maxTimeSinceInput) {
+        keypadInput = "";
+        oled.setMessage("SMART\nLOCK");
+    }
+}
+
 
 // ----------------------------- WIFI -----------------------------
 
@@ -208,6 +322,13 @@ void checkWiFiInput() {
     }
 }
 
+void checkWiFiStatus() {
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("Reconnecting to wifi...");
+        WiFi.disconnect();
+        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    }
+}
 
 // ----------------------------- BLUETOOTH -----------------------------
 BLECharacteristic *pCharacteristic;
@@ -282,27 +403,40 @@ void checkBluetoothInput(int lockButtonState, long now) {
     }
 }
 
+
+
+
 // ----------------------------- SETUP AND LOOP -----------------------------
 void setup() {
+    // Pin Modes
     pinMode(LED_LOCKED, OUTPUT);
     pinMode(BUTTON_LOCK, INPUT);
     pinMode(ACTIVE_BUZZER, OUTPUT);
+    pinMode(LOCK, OUTPUT);
+    digitalWrite(LOCK, LOW); // Unlock the lock
+
     Serial.begin(115200);
     setupBLE(BLE_NAME);
     setupWiFI();
+    oled.init();
+    oled.setMessage("SMART\nLOCK");
     Serial.println("Setup Complete");
 }
 
 void loop() {
-    long now = millis();
+    // Check wifi status
+    checkWiFiStatus();
 
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("Reconnecting to wifi...");
-        WiFi.disconnect();
-        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    long now = millis();
+    int lockButtonState = digitalRead(BUTTON_LOCK);
+
+    // Keypad input
+    char key = keypad.getKey();
+    if (key) {
+        processKey(key);
     }
 
-    int lockButtonState = digitalRead(BUTTON_LOCK);
+
 
     // Lock button change
     if (lockButtonState == LOW && lastLockButtonState == HIGH) {
@@ -317,4 +451,6 @@ void loop() {
 
     // Update lastLockButtonState
     lastLockButtonState = lockButtonState;
+
+    checkTimeSinceInput();
 }
